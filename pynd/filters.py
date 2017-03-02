@@ -84,6 +84,9 @@ class NodeTypeFilter(object):
 
         return result
 
+    def get_line_no(self, node):
+        return node.lineno if not isinstance(node, ast.Module) else 0
+
     def get_source(self, path, node):
         # TODO: Strippng the last line here is a hack - how should we do it
         # properly?
@@ -108,13 +111,13 @@ class DocString(NodeTypeFilter):
         LOG.debug("Comparing %r and %r", docstring, pattern.pattern)
         return pattern(docstring)
 
-    def get_source(self, path, node):
-        """Get the source line for a particular node.
+    def get_line_no(self, node):
+        return node.lineno if not isinstance(node, ast.Module) else 0
 
-        TODO: Strippng the last line here is a hack - how should we do it
-        properly?
-        """
-        return linecache.getline(path, node.lineno) + self._get_docstring(node)
+    def get_source(self, path, node):
+        """Get the source line for a particular node."""
+        lineno = self.get_line_no(node)
+        return linecache.getline(path, lineno) + self._get_docstring(node)
 
 
 class NameFilter(NodeTypeFilter):
@@ -179,16 +182,36 @@ class ImportFilter(NodeTypeFilter):
         return False
 
 
+class DefFilter(NameFilter):
+
+    def __init__(self, short, name, types, parent_types, help):
+        super(DefFilter, self).__init__(short, name, types, help)
+        self.parent_types = parent_types
+
+    def match(self, node, patterns):
+
+        if not isinstance(node.parent, self.parent_types):
+            return
+
+        return super(DefFilter, self).match(node, patterns)
+
+
 def get_all_filters():
     """Return all the available filters"""
     return (
         # TODO: Add ast.Module to the docstring search.
-        DocString('d', 'doc', (ast.FunctionDef, ast.ClassDef, ),
+        DocString('d', 'doc', (ast.FunctionDef, ast.ClassDef, ast.Module),
                   help="Match class and function docstrings."),
         NameFilter('c', 'class', (ast.ClassDef, ),
                   help="Match class names."),
-        NameFilter('f', 'def', (ast.FunctionDef, ),
-                  help="Match function names."),
+        DefFilter('f', 'def', (ast.FunctionDef, ), (ast.AST, ),
+                  help="Match all defs."),
+        DefFilter('F', 'function', (ast.FunctionDef, ), (ast.Module, ),
+                  help="Match function names at the module level."),
+        DefFilter('m', 'method', (ast.FunctionDef, ), (ast.ClassDef, ),
+                  help="Match class method names."),
+        DefFilter('j', 'closure', (ast.FunctionDef, ), (ast.FunctionDef, ),
+                  help="Match closure def names."),
         ImportFilter('i', 'import', (ast.Import, ast.ImportFrom, ),
                      help="Match imported package names."),
         CallFilter('C', 'call', (ast.Call, ),
